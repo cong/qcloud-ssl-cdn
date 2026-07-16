@@ -21,6 +21,8 @@ jobs:
       - name: Update Cert
         env:
           # 环境变量根据实际情况自行修改或增删，未设置则使用默认值（参见update.sh）
+          Tencent_SecretId: ${{ secrets.SECRETID }}
+          Tencent_SecretKey: ${{ secrets.SECRETKEY }}
           DP_Id: ${{ secrets.DP_Id }}
           DP_Key: ${{ secrets.DP_Key }}
           CF_Token: ${{ secrets.CF_TOKEN }}

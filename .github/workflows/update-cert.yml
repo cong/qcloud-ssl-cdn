@@ -9,6 +9,12 @@ on:
 jobs:
   build:
     runs-on: ubuntu-latest
+    # 设置输出变量，供后续步骤使用
+    outputs:
+      cert_status: ${{ steps.cert_update.outputs.cert_status }}
+      cert_error: ${{ steps.cert_update.outputs.cert_error }}
+      cdn_update_status: ${{ steps.cert_update.outputs.cdn_update_status }}
+      deploy_status: ${{ steps.cert_update.outputs.deploy_status }}
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
@@ -43,7 +49,23 @@ jobs:
           CERT_HOME: /home/runner/.acme.sh
           ACME_HOME: /home/runner/.acme.sh
           WORK_DIR: .
-        run: sh ./docker/update.sh
+        run: 
+          sh ./docker/update.sh
+          # 检查证书申请/更新结果
+          if [ -f "${CERT_HOME}/${ACME_DOMAIN}/fullchain.cer" ] || [ -f "${CERT_HOME}/${ACME_DOMAIN}_ecc/fullchain.cer" ]; then
+            echo "cert_status=success" >> $GITHUB_OUTPUT
+            echo "cert_error=证书文件存在" >> $GITHUB_OUTPUT
+          else
+            echo "cert_status=failed" >> $GITHUB_OUTPUT
+            echo "cert_error=证书文件不存在" >> $GITHUB_OUTPUT
+          fi
+          
+          # 检查 Python 脚本输出是否包含成功信息（根据你的脚本输出调整）
+          if grep -q "成功更新域名为.*的CDN的ssl证书" /tmp/cert_update.log 2>/dev/null; then
+            echo "cdn_update_status=success" >> $GITHUB_OUTPUT
+          else
+            echo "cdn_update_status=failed" >> $GITHUB_OUTPUT
+          fi
 
       - name: 钉钉通知
         uses: leafney/dingtalk-action@v1
@@ -61,9 +83,18 @@ jobs:
           # 通知正文，支持 Markdown 语法
           text: |
             ### ${{ job.status == 'success' && '✅' || '❌' }} 证书更新任务
-            - **状态**: ${{ job.status }}
-            - **仓库**: [${{ github.repository }}](https://github.com/${{ github.repository }})
-            - **分支**: ${{ github.ref_name }}
-            - **触发时间**: ${{ github.event.head_commit.timestamp }}
-            - **提交信息**: ${{ github.event.head_commit.message }}
-            > 点击[查看运行详情](${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }})
+            
+            | 项目 | 详情 |
+            | :--- | :--- |
+            | **任务状态** | ${{ job.status == 'success' && '成功 ✅' || '失败 ❌' }} |
+            | **证书申请状态** | ${{ steps.cert_update.outputs.cert_status == 'success' && '✅ 成功' || '❌ 失败' }} |
+            | **CDN SSL更新状态** | ${{ steps.cert_update.outputs.cdn_update_status == 'success' && '✅ 成功' || '❌ 失败' }} |
+            | **仓库** | [${{ github.repository }}](https://github.com/${{ github.repository }}) |
+            | **分支** | `${{ github.ref_name }}` |
+            | **触发时间** | ${{ github.event.head_commit.timestamp }} |
+            | **提交信息** | ${{ github.event.head_commit.message }} |
+            
+            **错误信息**：
+            ${{ steps.cert_update.outputs.cert_error || '无错误' }}
+            
+            > [🔗 查看运行详情](${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }})

@@ -6,10 +6,31 @@ if [ "${ACME_ENABLED:=true}" = "true" ]; then
   # 使用acme获取/更新证书
   ${ACME_HOME}/acme.sh ${ACME_PARAMS:-} --force --issue --cert-home ${CERT_HOME} -d ${ACME_DOMAIN} -d *.${ACME_DOMAIN} --dns ${ACME_DNS_TYPE}
   # 兼容ecc证书
+  # if [ -d "${CERT_HOME}/${ACME_DOMAIN}_ecc" ]; then
+  #   mkdir -p ${CERT_HOME}/${ACME_DOMAIN}
+  #   cp -rf ${CERT_HOME}/${ACME_DOMAIN}_ecc/* ${CERT_HOME}/${ACME_DOMAIN}
+  #   echo "The ECC certificate is detected"
+  # fi
+  # 兼容ecc证书
   if [ -d "${CERT_HOME}/${ACME_DOMAIN}_ecc" ]; then
+    echo "检测到 ECC 证书目录，正在复制到 ${CERT_HOME}/${ACME_DOMAIN}"
     mkdir -p ${CERT_HOME}/${ACME_DOMAIN}
-    cp -rf ${CERT_HOME}/${ACME_DOMAIN}_ecc/* ${CERT_HOME}/${ACME_DOMAIN}
-    echo "The ECC certificate is detected"
+    # 添加 -v 参数显示复制过程，便于调试
+    cp -rvf ${CERT_HOME}/${ACME_DOMAIN}_ecc/* ${CERT_HOME}/${ACME_DOMAIN}
+    # 检查复制结果
+    if [ $? -eq 0 ] && [ -f "${CERT_HOME}/${ACME_DOMAIN}/fullchain.cer" ]; then
+      echo "ECC 证书复制成功"
+    else
+      echo "错误：ECC 证书复制失败，请检查目录和权限"
+      exit 1  # 脚本提前退出，避免后续 Python 报错
+    fi
+  else
+    echo "未检测到 ECC 证书目录，检查标准证书目录"
+    # 可选的：如果标准目录也不存在，直接报错退出
+    if [ ! -f "${CERT_HOME}/${ACME_DOMAIN}/fullchain.cer" ]; then
+      echo "错误：在 ${CERT_HOME}/${ACME_DOMAIN} 未找到证书文件"
+      exit 1
+    fi
   fi
 fi
 

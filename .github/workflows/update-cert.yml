@@ -45,16 +45,25 @@ jobs:
           WORK_DIR: .
         run: sh ./docker/update.sh
 
-      - name: Notification
-        uses: monlor/bark-action@v3
-        if: always()
+      - name: 钉钉通知
+        uses: leafney/dingtalk-action@v1
+        if: always() # 无论失败还是成功都发送通知
+        env:
+          # 从 Secrets 中读取钉钉凭证并设置为环境变量
+          DINGTALK_ACCESS_TOKEN: ${{ secrets.DINGTALK_ACCESS_TOKEN }}
+          # 如果启用了加签，需要这个环境变量
+          DINGTALK_SECRET: ${{ secrets.DINGTALK_SECRET }}
         with:
-          host: ${{ secrets.BARK_HOST}} # not required
-          key: ${{ secrets.BARK_KEY }}   # Your secret key
-          title: Github Actions
-          body: 'Your tencent cdn certs update ${{ job.status }}！'
-          isArchive: 1
-          url: 'github://github.com/${{ github.repository }}'
-          group: Github
-          icon: https://github.githubassets.com/images/modules/logos_page/GitHub-Mark.png
-          copy: ${{ steps.meta.outputs.tags }}
+          # 消息类型，这里使用 markdown 可以展示丰富格式
+          msgtype: markdown
+          # 通知标题
+          title: 'GitHub Actions 证书更新通知'
+          # 通知正文，支持 Markdown 语法
+          text: |
+            ### ${{ job.status == 'success' && '✅' || '❌' }} 证书更新任务
+            - **状态**: ${{ job.status }}
+            - **仓库**: [${{ github.repository }}](https://github.com/${{ github.repository }})
+            - **分支**: ${{ github.ref_name }}
+            - **触发时间**: ${{ github.event.head_commit.timestamp }}
+            - **提交信息**: ${{ github.event.head_commit.message }}
+            > 点击[查看运行详情](${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }})

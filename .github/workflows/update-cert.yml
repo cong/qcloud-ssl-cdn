@@ -3,18 +3,16 @@ name: Update Cert
 on:
   schedule:
     - cron: '0 10 1 * *'
-  # add a tag to trigger manually
   workflow_dispatch:
 
 jobs:
   build:
     runs-on: ubuntu-latest
-    # 设置输出变量，供后续步骤使用
     outputs:
-      cert_status: ${{ steps.cert_update.outputs.cert_status }}
-      cert_error: ${{ steps.cert_update.outputs.cert_error }}
-      cdn_update_status: ${{ steps.cert_update.outputs.cdn_update_status }}
-      deploy_status: ${{ steps.cert_update.outputs.deploy_status }}
+      cert_status: ${{ steps.analyze_result.outputs.cert_status }}
+      cert_error: ${{ steps.analyze_result.outputs.cert_error }}
+      cdn_update_status: ${{ steps.analyze_result.outputs.cdn_update_status }}
+      deploy_status: ${{ steps.analyze_result.outputs.deploy_status }}
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
@@ -24,9 +22,11 @@ jobs:
           curl https://get.acme.sh | sh -s email=my@example.com
           pip install -r requirements.txt
 
-      - name: Update Cert
+      # ========== 步骤1：执行更新脚本（允许失败） ==========
+      - name: 执行证书更新脚本
+        id: run_update
+        continue-on-error: true  # 关键：即使脚本失败也继续
         env:
-          # 环境变量根据实际情况自行修改或增删，未设置则使用默认值（参见update.sh）
           Tencent_SecretId: ${{ secrets.SECRETID }}
           Tencent_SecretKey: ${{ secrets.SECRETKEY }}
           DP_Id: ${{ secrets.DP_Id }}
@@ -49,54 +49,67 @@ jobs:
           CERT_HOME: /home/runner/.acme.sh
           ACME_HOME: /home/runner/.acme.sh
           WORK_DIR: .
-        run: 
-          sh ./docker/update.sh
+        run: |
+          # 执行脚本并保存所有输出到日志文件（同时显示在控制台）
+          sh ./docker/update.sh 2>&1 | tee cert_update.log
+          # 记录脚本的退出码
+          echo "SCRIPT_EXIT_CODE=$?" >> $GITHUB_ENV
 
-          # 检查证书申请/更新结果
+      # ========== 步骤2：分析结果并设置输出 ==========
+      - name: 分析更新结果
+        id: analyze_result
+        if: always()  # 无论上一步成功与否都执行
+        env:
+          ACME_DOMAIN: ${{ secrets.ACME_DOMAIN }}
+          CERT_HOME: /home/runner/.acme.sh
+        run: |
+          # 检查证书是否存在
           if [ -f "${CERT_HOME}/${ACME_DOMAIN}/fullchain.cer" ] || [ -f "${CERT_HOME}/${ACME_DOMAIN}_ecc/fullchain.cer" ]; then
             echo "cert_status=success" >> $GITHUB_OUTPUT
             echo "cert_error=证书文件存在" >> $GITHUB_OUTPUT
           else
             echo "cert_status=failed" >> $GITHUB_OUTPUT
-            echo "cert_error=证书文件不存在" >> $GITHUB_OUTPUT
+            echo "cert_error=未找到证书文件，请检查 acme.sh 执行日志" >> $GITHUB_OUTPUT
           fi
-          
-          # 检查 Python 脚本输出是否包含成功信息（根据你的脚本输出调整）
-          if grep -q "成功更新域名为.*的CDN的ssl证书" /tmp/cert_update.log 2>/dev/null; then
+
+          # 检查 CDN 更新是否成功（从日志中搜索关键信息）
+          if [ -f "cert_update.log" ] && grep -q "成功更新域名为.*的CDN的ssl证书" cert_update.log 2>/dev/null; then
             echo "cdn_update_status=success" >> $GITHUB_OUTPUT
+            echo "deploy_status=success" >> $GITHUB_OUTPUT
           else
             echo "cdn_update_status=failed" >> $GITHUB_OUTPUT
+            echo "deploy_status=failed" >> $GITHUB_OUTPUT
+            # 提取错误信息（如果有）
+            if [ -f "cert_update.log" ]; then
+              ERROR_MSG=$(tail -30 cert_update.log | grep -E "ERROR|error|Exception|失败|Invalid" | head -5 | tr '\n' '; ')
+              echo "cert_error=CDN更新失败: ${ERROR_MSG:-请查看完整日志}" >> $GITHUB_OUTPUT
+            fi
           fi
 
-
+      # ========== 步骤3：钉钉通知 ==========
       - name: 钉钉通知
         uses: leafney/dingtalk-action@v1
-        if: always() # 无论失败还是成功都发送通知
+        if: always()
         env:
-          # 从 Secrets 中读取钉钉凭证并设置为环境变量
           DINGTALK_ACCESS_TOKEN: ${{ secrets.DINGTALK_ACCESS_TOKEN }}
-          # 如果启用了加签，需要这个环境变量
           DINGTALK_SECRET: ${{ secrets.DINGTALK_SECRET }}
         with:
-          # 消息类型，这里使用 markdown 可以展示丰富格式
           msgtype: markdown
-          # 通知标题
           title: 'GitHub Actions 证书更新通知'
-          # 通知正文，支持 Markdown 语法
           text: |
             ### ${{ job.status == 'success' && '✅' || '❌' }} 证书更新任务
-            
+
             | 项目 | 详情 |
             | :--- | :--- |
             | **任务状态** | ${{ job.status == 'success' && '成功 ✅' || '失败 ❌' }} |
-            | **证书申请状态** | ${{ steps.cert_update.outputs.cert_status == 'success' && '✅ 成功' || '❌ 失败' }} |
-            | **CDN SSL更新状态** | ${{ steps.cert_update.outputs.cdn_update_status == 'success' && '✅ 成功' || '❌ 失败' }} |
+            | **证书申请状态** | ${{ steps.analyze_result.outputs.cert_status == 'success' && '✅ 成功' || '❌ 失败' }} |
+            | **CDN SSL更新状态** | ${{ steps.analyze_result.outputs.cdn_update_status == 'success' && '✅ 成功' || '❌ 失败' }} |
             | **仓库** | [${{ github.repository }}](https://github.com/${{ github.repository }}) |
             | **分支** | `${{ github.ref_name }}` |
             | **触发时间** | ${{ github.event.head_commit.timestamp }} |
             | **提交信息** | ${{ github.event.head_commit.message }} |
-            
-            **错误信息**：
-            ${{ steps.cert_update.outputs.cert_error || '无错误' }}
-            
+
+            **📋 详细信息**：
+            ${{ steps.analyze_result.outputs.cert_error || '无错误' }}
+
             > [🔗 查看运行详情](${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }})

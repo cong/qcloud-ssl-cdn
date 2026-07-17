@@ -51,21 +51,7 @@ jobs:
           WORK_DIR: .
         run: 
           sh ./docker/update.sh
-          # 检查证书申请/更新结果
-          if [ -f "${CERT_HOME}/${ACME_DOMAIN}/fullchain.cer" ] || [ -f "${CERT_HOME}/${ACME_DOMAIN}_ecc/fullchain.cer" ]; then
-            echo "cert_status=success" >> $GITHUB_OUTPUT
-            echo "cert_error=证书文件存在" >> $GITHUB_OUTPUT
-          else
-            echo "cert_status=failed" >> $GITHUB_OUTPUT
-            echo "cert_error=证书文件不存在" >> $GITHUB_OUTPUT
-          fi
-          
-          # 检查 Python 脚本输出是否包含成功信息（根据你的脚本输出调整）
-          if grep -q "成功更新域名为.*的CDN的ssl证书" /tmp/cert_update.log 2>/dev/null; then
-            echo "cdn_update_status=success" >> $GITHUB_OUTPUT
-          else
-            echo "cdn_update_status=failed" >> $GITHUB_OUTPUT
-          fi
+
 
       - name: 钉钉通知
         uses: leafney/dingtalk-action@v1
